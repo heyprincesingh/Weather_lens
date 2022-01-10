@@ -1,17 +1,69 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:timer_builder/timer_builder.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:geocoding/geocoding.dart';
+
 
 DateTime time = DateTime.now();
+String? area = "NULL";
+String? city = "NULL";
 
-class Home extends StatelessWidget {
+class Home extends StatefulWidget {
   const Home({Key? key}) : super(key: key);
+
+  @override
+  State<Home> createState() => _HomeState();
+}
+
+class _HomeState extends State<Home> {
+
+  String location ='Null, Press Button';
+  String Address = 'search';
+
+  Future<Position> _getGeoLocationPosition() async {
+    bool serviceEnabled;
+    LocationPermission permission;
+
+    serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      await Geolocator.openLocationSettings();
+      return Future.error('Location services are disabled.');
+    }
+
+    permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        return Future.error('Location permissions are denied');
+      }
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      return Future.error(
+          'Location permissions are permanently denied, we cannot request permissions.');
+    }
+
+    return await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+  }
+  Future<void> GetAddressFromLatLong(Position position)async {
+    List<Placemark> placemarks = await placemarkFromCoordinates(
+        position.latitude, position.longitude);
+    //print(placemarks);
+    Placemark place = placemarks[1];
+    Address = '${place.name}, ${place.subLocality}, ${place.locality}, ${place.administrativeArea}, ${place.country}, ${place.postalCode}';
+    print(Address);
+    setState(() {
+      area = place.subLocality;
+      city = place.locality;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     var device = MediaQuery.of(context).size;
-    String city = "Lucknow";
-    String state = "Uttar Pradesh";
+    //area = "Lucknow";
+    //city = "Uttar Pradesh";
     double temp = 17.8;
     double humid = 76.4;
     double wind = 12.6;
@@ -19,7 +71,7 @@ class Home extends StatelessWidget {
     String sunset = "17:30";
     String description = "Clear condition throughtout the day with early morning rain";
     double height = device.height;
-    TextEditingController location = TextEditingController();
+    TextEditingController location_text = TextEditingController();
 
     return SafeArea(
       child: Scaffold(
@@ -39,14 +91,18 @@ class Home extends StatelessWidget {
                       children: [
                         SizedBox(width: 13),
                         GestureDetector(
-                            onTap: (){print("Tapped Location");},
+                            onTap: () async{
+                              Position position = await _getGeoLocationPosition();
+                              location = 'Lat: ${position.latitude} , Long: ${position.longitude}';
+                              GetAddressFromLatLong(position);
+                            },
                             child: Icon(Icons.location_on,color: Color(0xff222830),)),
                         SizedBox(width: 13),
                         Expanded(
                             child: TextFormField(
-                              controller: location,
+                              controller: location_text,
                               onFieldSubmitted: (_){
-                                print("This is ${location.text}");
+                                print("This is ${location_text.text}");
                               },
                               maxLines: 1,
                               style: TextStyle(color: Colors.white),
@@ -80,7 +136,7 @@ class Home extends StatelessWidget {
                 child: Stack(
                   children: [
                     Positioned(
-                      child: Text(city + ",",
+                      child: Text("${area}" + ",",
                         style: TextStyle(
                             fontSize: 30,
                             fontWeight: FontWeight.w600,
@@ -89,7 +145,7 @@ class Home extends StatelessWidget {
                       top: 30,
                       left: 10,),
                     Positioned(
-                      child: Text(state,
+                      child: Text("${city}",
                         style: TextStyle(
                             fontSize: 31,
                             fontWeight: FontWeight.w400,
@@ -325,7 +381,7 @@ class Home extends StatelessWidget {
     );
   }
 }
-
+ // Clock
 class timer extends StatefulWidget {
   const timer({Key? key}) : super(key: key);
 
