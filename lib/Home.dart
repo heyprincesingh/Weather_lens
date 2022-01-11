@@ -3,11 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:timer_builder/timer_builder.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 
 DateTime time = DateTime.now();
-String? area = "NULL";
-String? city = "NULL";
+String? area;
+String? city;
 
 class Home extends StatefulWidget {
   const Home({Key? key}) : super(key: key);
@@ -55,15 +56,37 @@ class _HomeState extends State<Home> {
     print(Address);
     setState(() {
       area = place.subLocality;
+      setlocationdetails();
       city = place.locality;
     });
   }
 
+  getlocationdetails() async{
+    SharedPreferences local_area = await SharedPreferences.getInstance();
+    SharedPreferences local_city = await SharedPreferences.getInstance();
+    String? saved_area = local_area.getString("areakey");
+    String? saved_city = local_city.getString("citykey");
+    area = await saved_area ?? "Update";
+    city = await saved_city ?? "Your Location!";
+  }
+
+  setlocationdetails() async{
+    SharedPreferences local_area = await SharedPreferences.getInstance();
+    SharedPreferences local_city = await SharedPreferences.getInstance();
+    local_area.setString("areakey", area!);
+    local_city.setString("citykey", city!);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    getlocationdetails();
+  }
+
+
   @override
   Widget build(BuildContext context) {
     var device = MediaQuery.of(context).size;
-    //area = "Lucknow";
-    //city = "Uttar Pradesh";
     double temp = 17.8;
     double humid = 76.4;
     double wind = 12.6;
@@ -111,11 +134,12 @@ class _HomeState extends State<Home> {
                                 focusedBorder: InputBorder.none,
                                 enabledBorder: InputBorder.none,
                                 hintStyle: TextStyle(
+                                  height: 1,
                                   fontSize: 18,
                                   color: Colors.white54,
                                   fontWeight: FontWeight.w400,
                                 ),
-                                hintText: "Location",
+                                hintText: area == "Update" || area == null ? "Location" : "$area, $city",
                               ),
                             )
                         )
@@ -136,7 +160,7 @@ class _HomeState extends State<Home> {
                 child: Stack(
                   children: [
                     Positioned(
-                      child: Text("${area}" + ",",
+                      child: area == null ? Container() : Text(area == "Update" ? "${area}" : "${area}" + ",",
                         style: TextStyle(
                             fontSize: 30,
                             fontWeight: FontWeight.w600,
@@ -145,7 +169,7 @@ class _HomeState extends State<Home> {
                       top: 30,
                       left: 10,),
                     Positioned(
-                      child: Text("${city}",
+                      child: city == null ? Container() : Text("${city}",
                         style: TextStyle(
                             fontSize: 31,
                             fontWeight: FontWeight.w400,
