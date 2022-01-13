@@ -1,14 +1,29 @@
+import 'dart:convert';
+import 'package:api_cache_manager/models/cache_db_model.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:timer_builder/timer_builder.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
+import 'package:api_cache_manager/api_cache_manager.dart';
+import 'package:fluttertoast/fluttertoast.dart';
+import 'package:http/http.dart';
 
 DateTime time = DateTime.now();
+DateTime tomorrow = DateTime.now().add(Duration(days: 1));
+
 String? area;
 String? city;
+
+double temp = -99;
+double humid = -99;
+double wind = -99;
+String sunrise = "-";
+String sunset = "-";
+String description = "Hey! Hope you're having a nice day...";
+List? hoursData = null;
+
 
 class Home extends StatefulWidget {
   const Home({Key? key}) : super(key: key);
@@ -29,20 +44,22 @@ class _HomeState extends State<Home> {
     serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
       await Geolocator.openLocationSettings();
-      return Future.error('Location services are disabled.');
+      return Future.error('Location services are disabled');
     }
 
     permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
       if (permission == LocationPermission.denied) {
-        return Future.error('Location permissions are denied');
+        Fluttertoast.showToast(msg: 'Location permissions are denied',
+            toastLength: Toast.LENGTH_LONG);
       }
     }
 
     if (permission == LocationPermission.deniedForever) {
-      return Future.error(
-          'Location permissions are permanently denied, we cannot request permissions.');
+      Fluttertoast.showToast(msg:
+      'Location permissions are permanently denied, we cannot request permissions',
+          toastLength: Toast.LENGTH_LONG);
     }
 
     return await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
@@ -50,14 +67,16 @@ class _HomeState extends State<Home> {
   Future<void> GetAddressFromLatLong(Position position)async {
     List<Placemark> placemarks = await placemarkFromCoordinates(
         position.latitude, position.longitude);
-    //print(placemarks);
     Placemark place = placemarks[1];
-    Address = '${place.name}, ${place.subLocality}, ${place.locality}, ${place.administrativeArea}, ${place.country}, ${place.postalCode}';
+    String? sublocality = place.subLocality;
+    String? locality = place.locality;
+    getAPIData(sublocality! , locality!);
+    Address = '${place.subLocality}, ${place.locality}, ${place.administrativeArea}, ${place.country}, ${place.postalCode}';
     print(Address);
     setState(() {
       area = place.subLocality;
-      setlocationdetails();
       city = place.locality;
+      setlocationdetails();
     });
   }
 
@@ -66,8 +85,24 @@ class _HomeState extends State<Home> {
     SharedPreferences local_city = await SharedPreferences.getInstance();
     String? saved_area = local_area.getString("areakey");
     String? saved_city = local_city.getString("citykey");
-    area = await saved_area ?? "Update";
-    city = await saved_city ?? "Your Location!";
+    setState(() async {
+      area = saved_area ?? "Update";
+      city = saved_city ?? "Your Location!";
+      if(area == "Update") {
+        askforlocation();
+      }
+      else{
+        //Get Saved Weather API data from cache memory
+        var isCacheExist = await APICacheManager().isAPICacheKeyExist("Weather_Details");
+        if(!isCacheExist)
+          getAPIData("$area", "$city");
+        else{
+          var cacheData = await APICacheManager().getCacheData("Weather_Details");
+          Map ApiData = jsonDecode(cacheData.syncData);
+          updateAPIdata(ApiData);
+        }
+      }
+    });
   }
 
   setlocationdetails() async{
@@ -75,6 +110,38 @@ class _HomeState extends State<Home> {
     SharedPreferences local_city = await SharedPreferences.getInstance();
     local_area.setString("areakey", area!);
     local_city.setString("citykey", city!);
+  }
+
+  askforlocation() async{
+    Position position = await _getGeoLocationPosition();
+    location = 'Lat: ${position.latitude} , Long: ${position.longitude}';
+    GetAddressFromLatLong(position);
+  }
+
+  updateAPIdata(Map ApiData){
+    String tempAddress = ApiData["resolvedAddress"];
+    List<String> AddressSplit = tempAddress.split(", ");
+    setState(() {
+      temp = ApiData["currentConditions"]["temp"];
+      humid = ApiData["currentConditions"]["humidity"];
+      wind = ApiData["currentConditions"]["windspeed"];
+      description = ApiData["days"][0]["description"];
+      sunrise = ApiData["currentConditions"]["sunrise"];
+      sunset = ApiData["currentConditions"]["sunset"];
+      hoursData = ApiData["days"][0]["hours"];
+      area = AddressSplit[0];
+      city = AddressSplit[1];
+    });
+  }
+
+  void getAPIData(String sublocality,String locality) async{
+    Response response = await get(Uri.parse("https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/$sublocality%2C%20$locality/${time.year}-${time.month}-${time.day}/${tomorrow.year}-${tomorrow.month}-${tomorrow.day}?unitGroup=metric&key=QPHZKJMCLVZMJA5RMBNLHBTU7&include=hours%2Ccurrent"));
+    Map ApiData = jsonDecode(response.body);
+    updateAPIdata(ApiData);
+    //Saving Weather API data in cache memory
+    APICacheManager().emptyCache();
+    APICacheDBModel cacheDBModel = new APICacheDBModel(key: "Weather_Details", syncData: response.body);
+    await APICacheManager().addCacheData(cacheDBModel);
   }
 
   @override
@@ -87,12 +154,6 @@ class _HomeState extends State<Home> {
   @override
   Widget build(BuildContext context) {
     var device = MediaQuery.of(context).size;
-    double temp = 17.8;
-    double humid = 76.4;
-    double wind = 12.6;
-    String sunrise = "06:56";
-    String sunset = "17:30";
-    String description = "Clear condition throughtout the day with early morning rain";
     double height = device.height;
     TextEditingController location_text = TextEditingController();
 
@@ -114,11 +175,7 @@ class _HomeState extends State<Home> {
                       children: [
                         SizedBox(width: 13),
                         GestureDetector(
-                            onTap: () async{
-                              Position position = await _getGeoLocationPosition();
-                              location = 'Lat: ${position.latitude} , Long: ${position.longitude}';
-                              GetAddressFromLatLong(position);
-                            },
+                            onTap: () {askforlocation();},
                             child: Icon(Icons.location_on,color: Color(0xff222830),)),
                         SizedBox(width: 13),
                         Expanded(
@@ -126,6 +183,7 @@ class _HomeState extends State<Home> {
                               controller: location_text,
                               onFieldSubmitted: (_){
                                 print("This is ${location_text.text}");
+                                getAPIData("${location_text.text}", "");
                               },
                               maxLines: 1,
                               style: TextStyle(color: Colors.white),
@@ -139,7 +197,7 @@ class _HomeState extends State<Home> {
                                   color: Colors.white54,
                                   fontWeight: FontWeight.w400,
                                 ),
-                                hintText: area == "Update" || area == null ? "Location" : "$area, $city",
+                                hintText: area == "Update" || area == null ? "Location" : "${area}, ${city}",
                               ),
                             )
                         )
@@ -319,12 +377,16 @@ class _HomeState extends State<Home> {
                                           child: ListView.builder(
                                             scrollDirection: Axis.horizontal,
                                             itemCount: 24,
-                                            itemBuilder: (context, index) => wholeDayStat("17.8","76.4","12.6",index),)
+                                            itemBuilder: (context, index)
+                                                { return //wholeDayStat(24, 23, 22, 21);
+                                                  hoursData == null ? wholeDayStat( -99, -99 , -99 , index ) :
+                                                  wholeDayStat( hoursData![index]["temp"], hoursData![index]["humidity"] , hoursData![index]["windspeed"] , index );
+                                                },
+                                          )
                                       )
                                     ],
                                   ),
                                 )
-
                               ],
                             )
                         ),
@@ -349,18 +411,18 @@ class _HomeState extends State<Home> {
     );
   }
 
-  Column wholeDayStat(String Temp,String Humid,String Wind, int index) {
+  Column wholeDayStat(dynamic hourTemp,dynamic hourHumid,dynamic hourWind, int index) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.center,
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Text( index < 10 ? "0$index:00" : "$index:00"  ,style: TextStyle(fontSize: 18,fontWeight: FontWeight.w500,color: Colors.white)),
-        SizedBox(height: 25,width: 70,),
-        Text(Temp,style: TextStyle(fontSize: 18,fontWeight: FontWeight.w400,color: Colors.white)),
+        Text(index < 10 ? "0$index:00" : "$index:00"  ,style: TextStyle(fontSize: 18,fontWeight: FontWeight.w500,color: Colors.white)),
+        SizedBox(height: 25,width: 70),
+        Text(hourTemp == -99 || hourTemp == null ? "-" : "${hourTemp}°" ,style: TextStyle(fontSize: 18,fontWeight: FontWeight.w400,color: Colors.white)),
         SizedBox(height: 25),
-        Text(Humid,style: TextStyle(fontSize: 18,fontWeight: FontWeight.w400,color: Colors.white)),
+        Text(hourHumid == -99 || hourHumid == null ? "-" : "${hourHumid}",style: TextStyle(fontSize: 18,fontWeight: FontWeight.w400,color: Colors.white)),
         SizedBox(height: 25),
-        Text(Wind,style: TextStyle(fontSize: 18,fontWeight: FontWeight.w400,color: Colors.white)),
+        Text(hourWind == -99 || hourWind == null ? "-" : "${hourWind}",style: TextStyle(fontSize: 18,fontWeight: FontWeight.w400,color: Colors.white)),
       ],
     );
   }
@@ -388,7 +450,7 @@ class _HomeState extends State<Home> {
                 fontWeight: FontWeight.w600,
                 color: Colors.white,
               )),
-          Text("$value",
+          Text(value == -99 ? "-" : "$value",
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w400,
@@ -429,7 +491,7 @@ class _timerState extends State<timer> {
         mainAxisAlignment: MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Text( time.hour > 12 ? (time.hour-12 < 10 ? "0${time.hour-12}":"${time.hour-12}") : (time.hour < 10 ? "0${time.hour}" : "${time.hour}"),style: TextStyle(fontSize: 70,color: Colors.white70,height: device.height * 0.0011),),
+          Text(time.hour > 12 ? (time.hour-12 < 10 ? "0${time.hour-12}":"${time.hour-12}") : (time.hour < 10 ? "0${time.hour}" : "${time.hour}"),style: TextStyle(fontSize: 70,color: Colors.white70,height: device.height * 0.0011),),
           Text(time.minute < 10 ? "0${time.minute}" : "${time.minute}",style: TextStyle(fontSize: 70,color: Colors.white70,height: device.height * 0.0011),),
           Text(time.hour < 12 ? "AM" : "PM",style: TextStyle(fontSize: 50,color: Colors.white70,height: device.height * 0.0012)),
         ],
